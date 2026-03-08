@@ -8,13 +8,13 @@ import math
 
 # ================= CAMPO (mm) =================
 WIDTH_MM = 3000
-HEIGHT_MM = 2000
+HEIGHT_MM = -2000
 
 FIELD_MARKERS = {
-    20: (600, 1400),
-    21: (2400, 1400),
-    22: (600, 600),
-    23: (2400, 600),
+    20: (600, -700),
+    21: (2400, -700),
+    22: (600, -1500),
+    23: (2400, -1500),
 }
 
 # ================= IDS =================
@@ -24,8 +24,8 @@ ENEMY_ROBOT_ID = 52
 SIMA_YELLOW_ID = 60
 SIMA_BLUE_ID = 61
 
-BOX_YELLOW_IDS = {36}
-BOX_BLUE_IDS = {47}
+BOX_YELLOW_IDS = {47}
+BOX_BLUE_IDS = {36}
 BOX_BLACK_IDS = {41}
 
 # ================= TIPOS =================
@@ -38,12 +38,7 @@ TYPE_US = 3
 ALPHA_POS = 0.30
 ALPHA_TH = 0.35
 
-# Ajustes de orientación por ID (si el ArUco no está alineado con el “frente” real)
-THETA_OFFSET_BY_ID = {
-    # ROBOT_ID: 0.0,
-    # 36: math.pi/2,
-    # 47: -math.pi/2,
-}
+THETA_OFFSET_BY_ID = {}
 
 def wrap_pi(a: float) -> float:
     return (a + math.pi) % (2.0 * math.pi) - math.pi
@@ -54,7 +49,7 @@ def angle_ema(prev: float, new: float, alpha: float) -> float:
 
 def get_zone_name(x_mm, y_mm):
     col = "IZQUIERDA" if x_mm < 1500 else "DERECHA"
-    row = "ABAJO" if y_mm < 1000 else "ARRIBA"
+    row = "ABAJO" if y_mm < -1100 else "ARRIBA" # Ajustado segun HEIGHT_MM
     return f"{row}-{col}"
 
 
@@ -114,10 +109,8 @@ class ObjectsStateNode(Node):
 
     # ---------- ORIENTACIÓN GLOBAL (MAPA) ----------
     def theta_from_corners(self, c4x2_px, mid):
-        # Vector TL -> TR en coordenadas del MAPA (mm)
         p0_mm = self.transform_point(c4x2_px[0])  # TL
         p1_mm = self.transform_point(c4x2_px[1])  # TR
-
         theta = math.atan2(p1_mm[1] - p0_mm[1], p1_mm[0] - p0_mm[0])
         theta += THETA_OFFSET_BY_ID.get(mid, 0.0)
         return wrap_pi(theta)
@@ -136,48 +129,30 @@ class ObjectsStateNode(Node):
 
     # ---------- CLASIFICACIÓN ----------
     def get_tipo(self, mid):
-        if mid == ROBOT_ID:
-            return TYPE_US
-        if mid == ENEMY_ROBOT_ID:
-            return TYPE_ENEMY
-        if mid == SIMA_YELLOW_ID:
-            return TYPE_YELLOW
-        if mid == SIMA_BLUE_ID:
-            return TYPE_BLUE
-        if mid in BOX_YELLOW_IDS:
-            return TYPE_YELLOW
-        if mid in BOX_BLUE_IDS:
-            return TYPE_BLUE
-        if mid in BOX_BLACK_IDS:
-            return None
+        if mid == ROBOT_ID: return TYPE_US
+        if mid == ENEMY_ROBOT_ID: return TYPE_ENEMY
+        if mid == SIMA_YELLOW_ID: return TYPE_YELLOW
+        if mid == SIMA_BLUE_ID: return TYPE_BLUE
+        if mid in BOX_YELLOW_IDS: return TYPE_YELLOW
+        if mid in BOX_BLUE_IDS: return TYPE_BLUE
         return None
 
     def get_obj_name(self, mid):
-        if mid == ROBOT_ID:
-            return "ROBOT_US"
-        if mid == ENEMY_ROBOT_ID:
-            return "ROBOT_ENEMY"
-        if mid == SIMA_YELLOW_ID:
-            return "SIMA_YELLOW"
-        if mid == SIMA_BLUE_ID:
-            return "SIMA_BLUE"
-        if mid in BOX_YELLOW_IDS:
-            return f"BOX_YELLOW_{mid}"
-        if mid in BOX_BLUE_IDS:
-            return f"BOX_BLUE_{mid}"
-        if mid in BOX_BLACK_IDS:
-            return f"BOX_BLACK_{mid}"
+        if mid == ROBOT_ID: return "ROBOT_US"
+        if mid == ENEMY_ROBOT_ID: return "ROBOT_ENEMY"
+        if mid == SIMA_YELLOW_ID: return "SIMA_YELLOW"
+        if mid == SIMA_BLUE_ID: return "SIMA_BLUE"
+        if mid in BOX_YELLOW_IDS: return f"BOX_YELLOW_{mid}"
+        if mid in BOX_BLUE_IDS: return f"BOX_BLUE_{mid}"
+        if mid in BOX_BLACK_IDS: return f"BOX_BLACK_{mid}"
         return f"ID_{mid}"
 
     # ---------- LOOP ----------
     def loop(self):
         ret, frame = self.cap.read()
-        if not ret:
-            return
+        if not ret: return
 
-        corners, ids, _ = cv2.aruco.detectMarkers(
-            frame, self.aruco_dict, parameters=self.aruco_params
-        )
+        corners, ids, _ = cv2.aruco.detectMarkers(frame, self.aruco_dict, parameters=self.aruco_params)
 
         if ids is None:
             cv2.imshow("Eurobot Vision", frame)
@@ -185,76 +160,58 @@ class ObjectsStateNode(Node):
             return
 
         H_new = self.compute_homography(corners, ids)
-        if H_new is not None:
-            self.homography = H_new
+        if H_new is not None: self.homography = H_new
         if self.homography is None:
             cv2.imshow("Eurobot Vision", frame)
             cv2.waitKey(1)
             return
 
-        # ===== DIBUJO DEL CAMPO =====
+        # Dibujo del campo
         board = [(0, 0), (WIDTH_MM, 0), (WIDTH_MM, HEIGHT_MM), (0, HEIGHT_MM)]
         px = [self.transform_inverse(p) for p in board]
         cv2.polylines(frame, [np.array(px)], True, (200, 200, 200), 2)
-
-        cv2.line(frame, self.transform_inverse((1500, 0)), self.transform_inverse((1500, HEIGHT_MM)), (150, 150, 150), 1)
-        cv2.line(frame, self.transform_inverse((0, 1000)), self.transform_inverse((WIDTH_MM, 1000)), (150, 150, 150), 1)
 
         msg = Float32MultiArray()
         msg.data = []
 
         for i, mid_raw in enumerate(ids.flatten()):
             mid = int(mid_raw)
-
-            # Ignorar marcadores fijos
-            if mid in FIELD_MARKERS:
-                continue
+            if mid in FIELD_MARKERS: continue
 
             tipo = self.get_tipo(mid)
-            if tipo is None:
-                continue
+            if tipo is None: continue
 
-            c = corners[i][0]  # (4,2) px
+            c = corners[i][0]
             center_px = np.mean(c, axis=0)
 
-            # Pose "raw" en mapa (mm) SOLO para dibujar encima del ArUco
             x_mm_raw, y_mm_raw = self.transform_point(center_px)
             theta_raw = self.theta_from_corners(c, mid)
+            
+            # Aplicar filtro EMA
+            x_mm_f, y_mm_f, theta_f = self.ema(mid, x_mm_raw, y_mm_raw, theta_raw)
 
-            # -------- DIBUJO: SIEMPRE encima del ArUco detectado --------
-            L_mm = 250.0
+            # -------- DIBUJO EN CÁMARA --------
+            L_mm = 200.0
             end_px = self.transform_inverse((
                 x_mm_raw + L_mm * math.cos(theta_raw),
                 y_mm_raw + L_mm * math.sin(theta_raw)
             ))
-            cv2.arrowedLine(
-                frame,
-                tuple(center_px.astype(int)),
-                end_px,
-                (0, 255, 0),
-                2
-            )
+            cv2.arrowedLine(frame, tuple(center_px.astype(int)), end_px, (0, 255, 0), 2)
 
-            # Texto cerca del ArUco detectado
             name = self.get_obj_name(mid)
-            cv2.putText(
-                frame,
-                name,
-                (int(center_px[0]) + 5, int(center_px[1]) - 5),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (255, 255, 255),
-                2
-            )
+            cv2.putText(frame, name, (int(center_px[0]) + 5, int(center_px[1]) - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
 
-            # -------- PUBLICACIÓN: filtrado por ID (ojo si IDs se repiten) --------
-            x_mm_f, y_mm_f, theta_f = self.ema(mid, x_mm_raw, y_mm_raw, theta_raw)
-            msg.data.extend([x_mm_f / 1000.0, y_mm_f / 1000.0, theta_f, float(tipo)])
-
+            # MOSTRAR VALORES SI ES EL ROBOT
             if mid == ROBOT_ID:
-                zone = get_zone_name(x_mm_raw, y_mm_raw)
-                cv2.putText(frame, f"ZONA: {zone}", (20, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                val_txt = f"X:{x_mm_f:.0f} Y:{y_mm_f:.0f} Th:{math.degrees(theta_f):.1f}deg"
+                cv2.putText(frame, val_txt, (int(center_px[0]) + 5, int(center_px[1]) + 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+
+                zone = get_zone_name(x_mm_f, y_mm_f)
+                cv2.putText(frame, f"ZONA: {zone}", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+
+            msg.data.extend([x_mm_f / 1000.0, y_mm_f / 1000.0, theta_f, float(tipo)])
 
         self.pub.publish(msg)
         cv2.imshow("Eurobot Vision", frame)
@@ -265,14 +222,15 @@ class ObjectsStateNode(Node):
         cv2.destroyAllWindows()
         super().destroy_node()
 
-
 def main():
     rclpy.init()
     node = ObjectsStateNode()
-    rclpy.spin(node)
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     node.destroy_node()
     rclpy.shutdown()
-
 
 if __name__ == "__main__":
     main()
